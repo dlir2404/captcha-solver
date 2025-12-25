@@ -1,4 +1,3 @@
-import { CAPTCHA_VEO3_COOKIES_KEY } from '../../common/const/captcha';
 import {
   Injectable,
   OnModuleInit,
@@ -6,10 +5,8 @@ import {
   Inject,
 } from '@nestjs/common';
 import * as puppeteer from 'puppeteer';
-import type { Browser } from 'puppeteer';
-import { type RedisClientType } from 'redis';
+import type { Browser, Page } from 'puppeteer';
 import { Logger } from '@nestjs/common';
-import { PROJECT_ID_KEY } from 'src/common/const/env.keys';
 
 declare global {
   interface Window {
@@ -23,14 +20,12 @@ declare global {
 
 @Injectable()
 export class CaptchaService implements OnModuleInit, OnModuleDestroy {
-  constructor(@Inject('REDIS') private redis: RedisClientType) {}
   private logger = new Logger(CaptchaService.name);
 
-  private projectId = '';
+  private projectId = '26685d88-6680-4f20-b9f4-894a1340f3a5';
   private browser: Browser | null = null;
   private isInitialized = false;
-  private context: any = null;
-  private cachedCookies: any = null;
+  private page: Page | null = null;
 
   async onModuleInit() {
     try {
@@ -101,6 +96,10 @@ export class CaptchaService implements OnModuleInit, OnModuleDestroy {
   async onModuleDestroy() {
     if (this.browser) {
       try {
+        if (this.page) {
+          await this.page.close();
+        }
+
         await this.browser.close();
         this.logger.log('Browser instance closed');
       } catch (error) {
@@ -114,10 +113,7 @@ export class CaptchaService implements OnModuleInit, OnModuleDestroy {
    * Can be triggered manually or scheduled with cron
    */
   async reloadCookies(): Promise<void> {
-    const projectId = (await this.redis.get(PROJECT_ID_KEY)) || '';
-    this.projectId = projectId;
-
-    const rawCookies = await this.redis.get(CAPTCHA_VEO3_COOKIES_KEY);
+    const rawCookies = await this.getRawCookies();
     const cookieData = rawCookies ? JSON.parse(atob(rawCookies)) : null;
 
     if (!this.browser) {
@@ -126,12 +122,6 @@ export class CaptchaService implements OnModuleInit, OnModuleDestroy {
 
     try {
       this.logger.log('🔄 Reloading cookies...');
-
-      if (this.context) {
-        await this.context.close();
-      }
-
-      this.context = await this.browser.createBrowserContext();
 
       if (cookieData) {
         this.logger.log(
@@ -170,7 +160,7 @@ export class CaptchaService implements OnModuleInit, OnModuleDestroy {
 
         for (const cookie of puppeteerCookies) {
           try {
-            await this.context.setCookie(cookie);
+            await this.browser.setCookie(cookie);
             successCount++;
 
             if (cookie.name.includes('session-token')) {
@@ -193,7 +183,7 @@ export class CaptchaService implements OnModuleInit, OnModuleDestroy {
         }
 
         // VERIFY what's actually in context
-        const setCookies = await this.context.cookies();
+        const setCookies = await this.browser.cookies();
         this.logger.log(`🍪 Cookies actually in context: ${setCookies.length}`);
         this.logger.log(
           `🍪 Names in context:` + setCookies.map((c) => c.name).join(','),
@@ -206,8 +196,12 @@ export class CaptchaService implements OnModuleInit, OnModuleDestroy {
           '🔑 Session token in context after set?' + !!contextSessionToken,
         );
 
-        this.cachedCookies = puppeteerCookies;
         this.logger.log('✅ Cookies reloaded and cached in browser context');
+
+        if (this.page) {
+          this.page = null;
+        }
+        await this.initPage();
       } else {
         this.logger.warn(
           '⚠️  No cookie data provided, context ready without cookies',
@@ -219,83 +213,71 @@ export class CaptchaService implements OnModuleInit, OnModuleDestroy {
     }
   }
 
+  async getRawCookies(): Promise<string | null> {
+    const res = await fetch('https://api.larry.io.vn/captcha/cookies');
+    if (res.ok) {
+      const data = await res.json();
+      return data.cookies;
+    } else {
+      this.logger.error('❌ Failed to fetch raw cookies, status:' + res.status);
+      return null;
+    }
+  }
+
+  async initPage() {
+    if (!this.browser) {
+      this.logger.error('❌ Browser not initialized');
+      throw new Error('Browser not initialized');
+    }
+
+    if (!this.page) {
+      this.logger.log('🌐 Initializing new page with cookies...');
+      this.page = await this.browser.newPage();
+
+      const url = `https://labs.google/fx/tools/flow/project/${this.projectId}/`;
+
+      this.logger.log('🌐 Loading page:' + url);
+      // Navigate to the final URL first (without cookies, will show login page)
+      await this.page.goto(url, {
+        waitUntil: 'domcontentloaded',
+        timeout: 30000,
+      });
+
+      await this.page.waitForFunction(
+        () => {
+          return (
+            typeof window.grecaptcha !== 'undefined' &&
+            window.grecaptcha.enterprise &&
+            typeof window.grecaptcha.enterprise.execute === 'function'
+          );
+        },
+        { timeout: 30000 },
+      );
+
+      // Wait a bit to ensure everything is stable
+      await new Promise((resolve) => setTimeout(resolve, 3000));
+    }
+  }
+
   async getCaptcha(isDebug: boolean = false): Promise<string> {
-    if (!this.isInitialized || !this.browser || !this.context) {
+    if (!this.isInitialized || !this.browser) {
       throw new Error(
         'CaptchaService not initialized. Browser or context unavailable.',
       );
-    }
-
-    if (!this.projectId) {
-      throw new Error('Project ID not set. Please configure environment.');
     }
 
     if (!this.browser.isConnected()) {
       throw new Error('Browser connection lost. Please try again.');
     }
 
-    let page;
-    try {
-      page = await this.context.newPage();
-    } catch (error) {
-      this.logger.error('❌ Failed to create page:', error);
-      throw new Error('Failed to create browser page');
+    if (!this.page) {
+      await this.initPage();
     }
 
+    const page = this.page;
+
     try {
-      const url = `https://labs.google/fx/tools/flow/project/${this.projectId}/`;
-      if (isDebug) {
-        this.logger.debug('🌐 Loading page:' + url);
-      }
-
-      // Navigate to the final URL first (without cookies, will show login page)
-      await page.goto(url, { waitUntil: 'domcontentloaded', timeout: 30000 });
-
-      if (isDebug) {
-        this.logger.debug('✅ Initial page load (not logged in yet)');
-      }
-
-      // NOW set cookies on the already-loaded page
-      if (this.cachedCookies && this.cachedCookies.length > 0) {
-        if (isDebug) {
-          this.logger.debug('🍪 Setting cookies on page...');
-        }
-
-        try {
-          await page.setCookie(...this.cachedCookies);
-          if (isDebug) {
-            this.logger.debug('✅ Cookies set on page');
-          }
-        } catch (error) {
-          this.logger.error('❌ Error setting cookies:', error);
-          // Try one by one
-          let successCount = 0;
-          for (const cookie of this.cachedCookies) {
-            try {
-              await page.setCookie(cookie);
-              successCount++;
-              if (
-                cookie.name === '__Secure-next-auth.session-token' &&
-                isDebug
-              ) {
-                this.logger.debug('✅ Session token set successfully');
-              }
-            } catch (err) {
-              this.logger.error(
-                `❌ Failed to set ${cookie.name}:`,
-                err.message,
-              );
-            }
-          }
-          if (isDebug) {
-            this.logger.debug(
-              `🍪 Set ${successCount}/${this.cachedCookies.length} cookies`,
-            );
-          }
-        }
-      }
-
-      if (isDebug) {
+      if (isDebug && page) {
         const currentCookies = await page.cookies();
         this.logger.debug('🍪 Cookies on page:' + currentCookies.length);
         this.logger.debug(
@@ -310,31 +292,19 @@ export class CaptchaService implements OnModuleInit, OnModuleDestroy {
         if (!sessionToken) {
           this.logger.error('❌ WARNING: Session token missing on page!');
         }
-
-        const screenshotBuffer = await page.screenshot({ fullPage: true });
       }
 
       if (isDebug) {
         // Wait for grecaptcha
         this.logger.debug('⏳ Waiting for grecaptcha...');
       }
-      await page.waitForFunction(
-        () => {
-          return (
-            typeof window.grecaptcha !== 'undefined' &&
-            window.grecaptcha.enterprise &&
-            typeof window.grecaptcha.enterprise.execute === 'function'
-          );
-        },
-        { timeout: 30000 },
-      );
 
       if (isDebug) {
         this.logger.debug('🔐 Executing reCAPTCHA...');
       }
 
       // Execute reCAPTCHA
-      const result = await page.evaluate(async () => {
+      const result = await page?.evaluate(async () => {
         try {
           const token = await window.grecaptcha.enterprise.execute(
             '6LdsFiUsAAAAAIjVDZcuLhaHiDn5nnHVXVRQGeMV',
@@ -348,24 +318,18 @@ export class CaptchaService implements OnModuleInit, OnModuleDestroy {
         }
       });
 
-      if (result.success && result.token) {
+      if (result?.success && result.token) {
         if (isDebug) {
           this.logger.debug('✅ reCAPTCHA solved, token obtained');
         }
         return result.token;
       } else {
-        this.logger.error('❌ Error:', result.error);
-        throw new Error(result.error);
+        this.logger.error('❌ Error:', result?.error);
+        throw new Error(result?.error);
       }
     } catch (error) {
       this.logger.error('❌ getCaptcha error:', error);
       throw error;
-    } finally {
-      try {
-        await page.close();
-      } catch (error) {
-        this.logger.error('⚠️  Error closing page:', error);
-      }
     }
   }
 
