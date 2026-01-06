@@ -1,10 +1,8 @@
 import { Module } from '@nestjs/common';
 import { CaptchaModule } from './modules/captcha/captcha.module';
-import { RedisModule } from './modules/redis/redis.module';
-import { AppController } from './app.controller';
+import { ConfigModule } from '@nestjs/config';
 
 @Module({
-  imports: [CaptchaModule, RedisModule],
-  controllers: [AppController],
+  imports: [CaptchaModule, ConfigModule.forRoot({ isGlobal: true })],
 })
 export class AppModule {}

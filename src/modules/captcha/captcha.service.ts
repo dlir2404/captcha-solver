@@ -1,15 +1,8 @@
-import { CAPTCHA_VEO3_COOKIES_KEY } from '../../common/const/captcha';
-import {
-  Injectable,
-  OnModuleInit,
-  OnModuleDestroy,
-  Inject,
-} from '@nestjs/common';
+import { Injectable, OnModuleInit, OnModuleDestroy } from '@nestjs/common';
 import * as puppeteer from 'puppeteer';
 import type { Browser } from 'puppeteer';
-import { type RedisClientType } from 'redis';
 import { Logger } from '@nestjs/common';
-import { PROJECT_ID_KEY } from 'src/common/const/env.keys';
+import { ConfigService } from '@nestjs/config';
 
 declare global {
   interface Window {
@@ -23,7 +16,7 @@ declare global {
 
 @Injectable()
 export class CaptchaService implements OnModuleInit, OnModuleDestroy {
-  constructor(@Inject('REDIS') private redis: RedisClientType) {}
+  constructor(private readonly configService: ConfigService) {}
   private logger = new Logger(CaptchaService.name);
 
   private projectId = '';
@@ -36,52 +29,9 @@ export class CaptchaService implements OnModuleInit, OnModuleDestroy {
     try {
       this.logger.log('🚀 Initializing Puppeteer browser instance...');
 
-      let options: any = {
+      const options: any = {
         headless: false,
       };
-
-      if (process.env.NODE_ENV === 'production') {
-        options = {
-          headless: false,
-          executablePath:
-            process.env.PUPPETEER_EXECUTABLE_PATH ||
-            '/usr/bin/chromium-browser',
-          args: [
-            '--no-sandbox',
-            '--disable-setuid-sandbox',
-            '--disable-dev-shm-usage',
-            '--disable-gpu',
-            '--disable-features=IsolateOrigins,site-per-process',
-            '--disable-software-rasterizer',
-            '--disable-extensions',
-            '--no-first-run',
-            '--disable-background-timer-throttling',
-          ],
-        };
-        // options = {
-        //   headless: true, // Hoặc 'new' nếu dùng headless mode mới
-        //   executablePath:
-        //     process.env.PUPPETEER_EXECUTABLE_PATH ||
-        //     '/usr/bin/chromium-browser',
-        //   args: [
-        //     '--no-sandbox',
-        //     '--disable-setuid-sandbox',
-        //     '--disable-dev-shm-usage',
-        //     '--disable-gpu',
-        //     '--disable-software-rasterizer',
-        //     '--disable-extensions',
-        //     '--no-first-run',
-        //     '--no-zygote',
-        //     '--single-process', // QUAN TRỌNG: fix namespace error
-        //     '--disable-background-timer-throttling',
-        //     '--disable-backgrounding-occluded-windows',
-        //     '--disable-renderer-backgrounding',
-        //     '--disable-features=IsolateOrigins,site-per-process',
-        //     '--disable-blink-features=AutomationControlled',
-        //     '--window-size=1920,1080',
-        //   ],
-        // };
-      }
 
       this.logger.log(
         'Launching browser with options:' + JSON.stringify(options),
@@ -114,10 +64,17 @@ export class CaptchaService implements OnModuleInit, OnModuleDestroy {
    * Can be triggered manually or scheduled with cron
    */
   async reloadCookies(): Promise<void> {
-    const projectId = (await this.redis.get(PROJECT_ID_KEY)) || '';
+    const serverUrl = this.configService.get<string>('SERVER_URL') || '';
+    const res = await fetch(serverUrl + '/captcha/env');
+    if (!res.ok) {
+      throw new Error('Failed to fetch env from server: ' + res.statusText);
+    }
+    const data = await res.json();
+
+    const projectId = data.projectId;
     this.projectId = projectId;
 
-    const rawCookies = await this.redis.get(CAPTCHA_VEO3_COOKIES_KEY);
+    const rawCookies = data.cookies;
     const cookieData = rawCookies ? JSON.parse(atob(rawCookies)) : null;
 
     if (!this.browser) {
