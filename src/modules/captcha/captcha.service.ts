@@ -22,7 +22,7 @@ export class CaptchaService implements OnModuleInit, OnModuleDestroy {
   private projectId = '';
   private browser: Browser | null = null;
   private isInitialized = false;
-  private context: any = null;
+  private incognitoContext: any = null;
   private cachedCookies: any = null;
 
   async onModuleInit() {
@@ -31,6 +31,7 @@ export class CaptchaService implements OnModuleInit, OnModuleDestroy {
 
       const options: any = {
         headless: false,
+        args: ['--no-sandbox', '--disable-setuid-sandbox'],
       };
 
       this.logger.log(
@@ -84,11 +85,11 @@ export class CaptchaService implements OnModuleInit, OnModuleDestroy {
     try {
       this.logger.log('🔄 Reloading cookies...');
 
-      if (this.context) {
-        await this.context.close();
+      if (this.incognitoContext) {
+        await this.incognitoContext.close();
       }
 
-      this.context = await this.browser.createBrowserContext();
+      this.incognitoContext = await this.browser.createBrowserContext();
 
       if (cookieData) {
         this.logger.log(
@@ -127,7 +128,7 @@ export class CaptchaService implements OnModuleInit, OnModuleDestroy {
 
         for (const cookie of puppeteerCookies) {
           try {
-            await this.context.setCookie(cookie);
+            await this.incognitoContext.setCookie(cookie);
             successCount++;
 
             if (cookie.name.includes('session-token')) {
@@ -150,7 +151,7 @@ export class CaptchaService implements OnModuleInit, OnModuleDestroy {
         }
 
         // VERIFY what's actually in context
-        const setCookies = await this.context.cookies();
+        const setCookies = await this.incognitoContext.cookies();
         this.logger.log(`🍪 Cookies actually in context: ${setCookies.length}`);
         this.logger.log(
           `🍪 Names in context:` + setCookies.map((c) => c.name).join(','),
@@ -164,7 +165,7 @@ export class CaptchaService implements OnModuleInit, OnModuleDestroy {
         );
 
         this.cachedCookies = puppeteerCookies;
-        this.logger.log('✅ Cookies reloaded and cached in browser context');
+        this.logger.log('✅ Cookies reloaded and cached in incognito context');
       } else {
         this.logger.warn(
           '⚠️  No cookie data provided, context ready without cookies',
@@ -177,9 +178,9 @@ export class CaptchaService implements OnModuleInit, OnModuleDestroy {
   }
 
   async getCaptcha(isDebug: boolean = false): Promise<string> {
-    if (!this.isInitialized || !this.browser || !this.context) {
+    if (!this.isInitialized || !this.browser || !this.incognitoContext) {
       throw new Error(
-        'CaptchaService not initialized. Browser or context unavailable.',
+        'CaptchaService not initialized. Browser or incognito context unavailable.',
       );
     }
 
@@ -193,7 +194,7 @@ export class CaptchaService implements OnModuleInit, OnModuleDestroy {
 
     let page;
     try {
-      page = await this.context.newPage();
+      page = await this.incognitoContext.newPage();
     } catch (error) {
       this.logger.error('❌ Failed to create page:', error);
       throw new Error('Failed to create browser page');
