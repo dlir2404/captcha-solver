@@ -1,0 +1,150 @@
+// ===================================
+// POPUP SCRIPT - UI Control
+// ===================================
+
+const elements = {
+    enabled: document.getElementById('enabled'),
+    autoReload: document.getElementById('autoReload'),
+    reloadInterval: document.getElementById('reloadInterval'),
+    reloadNow: document.getElementById('reloadNow'),
+    autoReloadRow: document.getElementById('autoReloadRow'),
+    intervalRow: document.getElementById('intervalRow')
+};
+
+// Load settings khi popup mở
+async function loadSettings() {
+    const response = await chrome.runtime.sendMessage({ type: 'GET_SETTINGS' });
+    
+    elements.enabled.checked = response.enabled;
+    elements.autoReload.checked = response.autoReload;
+    elements.reloadInterval.value = response.reloadInterval;
+    
+    updateUIState();
+}
+
+// Save settings khi thay đổi
+async function saveSettings() {
+    const settings = {
+        enabled: elements.enabled.checked,
+        autoReload: elements.autoReload.checked,
+        reloadInterval: parseInt(elements.reloadInterval.value)
+    };
+    
+    await chrome.runtime.sendMessage({
+        type: 'SAVE_SETTINGS',
+        settings: settings
+    });
+    
+    console.log('Settings saved:', settings);
+}
+
+// Update UI state dựa vào settings
+function updateUIState() {
+    const enabled = elements.enabled.checked;
+    const autoReload = elements.autoReload.checked;
+    
+    // Disable/enable controls
+    elements.autoReload.disabled = !enabled;
+    elements.reloadInterval.disabled = !enabled || !autoReload;
+    
+    // Visual feedback
+    if (!enabled) {
+        elements.autoReloadRow.classList.add('disabled');
+        elements.intervalRow.classList.add('disabled');
+    } else {
+        elements.autoReloadRow.classList.remove('disabled');
+        
+        if (autoReload) {
+            elements.intervalRow.classList.remove('disabled');
+        } else {
+            elements.intervalRow.classList.add('disabled');
+        }
+    }
+}
+
+// Event listeners
+elements.enabled.addEventListener('change', () => {
+    updateUIState();
+    saveSettings();
+    
+    // Add haptic feedback
+    if (navigator.vibrate) {
+        navigator.vibrate(10);
+    }
+});
+
+elements.autoReload.addEventListener('change', () => {
+    updateUIState();
+    saveSettings();
+    
+    if (navigator.vibrate) {
+        navigator.vibrate(10);
+    }
+});
+
+elements.reloadInterval.addEventListener('change', () => {
+    saveSettings();
+});
+
+elements.reloadNow.addEventListener('click', async () => {
+    const button = elements.reloadNow;
+    const originalHTML = button.innerHTML;
+    
+    button.innerHTML = '<span>⏳</span><span>Reloading...</span>';
+    button.disabled = true;
+    
+    try {
+        await chrome.runtime.sendMessage({ type: 'RELOAD_NOW' });
+        
+        button.innerHTML = '<span>✅</span><span>Reloaded!</span>';
+        
+        // Haptic feedback
+        if (navigator.vibrate) {
+            navigator.vibrate([10, 50, 10]);
+        }
+        
+        setTimeout(() => {
+            button.innerHTML = originalHTML;
+            button.disabled = false;
+        }, 2000);
+    } catch (error) {
+        button.innerHTML = '<span>❌</span><span>Error</span>';
+        
+        setTimeout(() => {
+            button.innerHTML = originalHTML;
+            button.disabled = false;
+        }, 2000);
+    }
+});
+
+// Validate interval input
+elements.reloadInterval.addEventListener('input', (e) => {
+    let value = parseInt(e.target.value);
+    if (isNaN(value) || value < 1) {
+        e.target.value = 1;
+    } else if (value > 60) {
+        e.target.value = 60;
+    }
+});
+
+// Prevent non-numeric input
+elements.reloadInterval.addEventListener('keydown', (e) => {
+    // Allow: backspace, delete, tab, escape, enter
+    if ([46, 8, 9, 27, 13].indexOf(e.keyCode) !== -1 ||
+        // Allow: Ctrl+A, Ctrl+C, Ctrl+V, Ctrl+X
+        (e.keyCode === 65 && e.ctrlKey === true) ||
+        (e.keyCode === 67 && e.ctrlKey === true) ||
+        (e.keyCode === 86 && e.ctrlKey === true) ||
+        (e.keyCode === 88 && e.ctrlKey === true) ||
+        // Allow: home, end, left, right
+        (e.keyCode >= 35 && e.keyCode <= 39)) {
+        return;
+    }
+    // Ensure that it is a number and stop the keypress
+    if ((e.shiftKey || (e.keyCode < 48 || e.keyCode > 57)) && (e.keyCode < 96 || e.keyCode > 105)) {
+        e.preventDefault();
+    }
+});
+
+// Initialize
+loadSettings();
