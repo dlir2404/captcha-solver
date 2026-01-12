@@ -1,8 +1,6 @@
 import { Injectable, OnModuleInit, OnModuleDestroy } from '@nestjs/common';
-import * as puppeteer from 'puppeteer';
-import type { Browser } from 'puppeteer';
+import { chromium, Browser, BrowserContext } from 'playwright';
 import { Logger } from '@nestjs/common';
-import { ConfigService } from '@nestjs/config';
 
 declare global {
   interface Window {
@@ -14,35 +12,65 @@ declare global {
   }
 }
 
+interface ProfileQueue {
+  context: BrowserContext;
+  inUse: boolean;
+  lastUsed: number;
+  profileId: string;
+}
+
 @Injectable()
 export class CaptchaService implements OnModuleInit, OnModuleDestroy {
-  constructor(private readonly configService: ConfigService) {}
   private logger = new Logger(CaptchaService.name);
-
-  private projectId = '';
   private browser: Browser | null = null;
   private isInitialized = false;
-  private incognitoContext: any = null;
-  private cachedCookies: any = null;
+
+  // Queue management
+  private profiles: Map<string, ProfileQueue> = new Map();
+  private readonly MAX_PROFILES = 5; // Số lượng profile tối đa
+  private readonly PROFILE_COOLDOWN = 5000; // 5s giữa các lần sử dụng cùng profile
+  private requestQueue: Array<{
+    resolve: (token: string) => void;
+    reject: (error: Error) => void;
+    isDebug: boolean;
+  }> = [];
+  private isProcessingQueue = false;
 
   async onModuleInit() {
     try {
-      this.logger.log('🚀 Initializing Puppeteer browser instance...');
+      this.logger.log('🚀 Initializing Playwright browser instance...');
 
-      const options: any = {
+      const launchOptions: any = {
         headless: false,
-        args: ['--no-sandbox', '--disable-setuid-sandbox'],
+        args: [
+          '--no-sandbox',
+          '--disable-setuid-sandbox',
+          '--disable-dev-shm-usage',
+          '--disable-blink-features=AutomationControlled',
+        ],
       };
 
+      if (process.env.NODE_ENV === 'production') {
+        launchOptions.executablePath =
+          process.env.PLAYWRIGHT_EXECUTABLE_PATH || '/usr/bin/chromium-browser';
+        launchOptions.args.push(
+          '--disable-gpu',
+          '--disable-software-rasterizer',
+          '--disable-extensions',
+          '--no-first-run',
+          '--disable-background-timer-throttling',
+        );
+      }
+
       this.logger.log(
-        'Launching browser with options:' + JSON.stringify(options),
+        'Launching browser with options: ' + JSON.stringify(launchOptions),
       );
 
-      this.browser = await puppeteer.launch(options);
+      this.browser = await chromium.launch(launchOptions);
       this.isInitialized = true;
-      this.logger.log('Puppeteer browser instance ready');
-      // Load cookies on startup
-      await this.reloadCookies();
+      this.logger.log('✅ Playwright browser instance ready');
+
+      await this.initializeProfiles();
     } catch (error) {
       this.logger.error('Failed to initialize browser:', error);
       throw error;
@@ -50,6 +78,17 @@ export class CaptchaService implements OnModuleInit, OnModuleDestroy {
   }
 
   async onModuleDestroy() {
+    // Đóng tất cả profiles
+    for (const [id, profile] of this.profiles.entries()) {
+      try {
+        await profile.context.close();
+        this.logger.log(`Closed profile ${id}`);
+      } catch (error) {
+        this.logger.error(`Error closing profile ${id}:`, error);
+      }
+    }
+    this.profiles.clear();
+
     if (this.browser) {
       try {
         await this.browser.close();
@@ -61,297 +100,244 @@ export class CaptchaService implements OnModuleInit, OnModuleDestroy {
   }
 
   /**
-   * Reload cookies from storage - call this when cookies change (e.g., daily)
-   * Can be triggered manually or scheduled with cron
+   * Khởi tạo nhiều browser profiles (contexts)
    */
-  async reloadCookies(): Promise<void> {
-    const serverUrl = this.configService.get<string>('SERVER_URL') || '';
-    const res = await fetch(serverUrl + '/captcha/env');
-    if (!res.ok) {
-      throw new Error('Failed to fetch env from server: ' + res.statusText);
-    }
-    const data = await res.json();
-
-    const projectId = data.projectId;
-    this.projectId = projectId;
-
-    const rawCookies = data.cookies;
-    const cookieData = rawCookies ? JSON.parse(atob(rawCookies)) : null;
-
+  private async initializeProfiles(): Promise<void> {
     if (!this.browser) {
       throw new Error('Browser not initialized');
     }
 
-    try {
-      this.logger.log('🔄 Reloading cookies...');
+    this.logger.log(`🔧 Creating ${this.MAX_PROFILES} browser profiles...`);
 
-      if (this.incognitoContext) {
-        await this.incognitoContext.close();
-      }
+    for (let i = 0; i < this.MAX_PROFILES; i++) {
+      const profileId = `profile_${i}`;
 
-      this.incognitoContext = await this.browser.createBrowserContext();
+      // Tạo context với các options để bypass detection
+      const context = await this.browser.newContext({
+        viewport: { width: 1920, height: 1080 },
+        userAgent:
+          'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36',
+        locale: 'en-US',
+        timezoneId: 'America/New_York',
+        permissions: ['geolocation'],
+        geolocation: { latitude: 40.7128, longitude: -74.006 },
+        colorScheme: 'light',
+        deviceScaleFactor: 1,
+        hasTouch: false,
+        isMobile: false,
+        javaScriptEnabled: true,
+      });
 
-      if (cookieData) {
-        this.logger.log(
-          '🍪 Original cookie count:' + cookieData.cookies.length,
-        );
+      // Anti-detection: Override navigator properties
+      await context.addInitScript(() => {
+        // Remove webdriver property
+        Object.defineProperty(navigator, 'webdriver', {
+          get: () => false,
+        });
 
-        const puppeteerCookies = this.convertCookies(cookieData);
+        // Mock plugins
+        Object.defineProperty(navigator, 'plugins', {
+          get: () => [1, 2, 3, 4, 5],
+        });
 
-        this.logger.log('🍪 Converted cookie count:' + puppeteerCookies.length);
-        this.logger.log(
-          '🍪 Cookie names:' + puppeteerCookies.map((c) => c.name).join(', '),
-        );
+        // Mock languages
+        Object.defineProperty(navigator, 'languages', {
+          get: () => ['en-US', 'en'],
+        });
 
-        // Check session token in converted list
-        const sessionToken = puppeteerCookies.find(
-          (c) => c.name === '__Secure-next-auth.session-token',
-        );
-        this.logger.log('🔑 Session token in converted?' + !!sessionToken);
-        if (sessionToken) {
-          this.logger.log(
-            '🔑 Session token details:' +
-              JSON.stringify({
-                name: sessionToken.name,
-                domain: sessionToken.domain,
-                secure: sessionToken.secure,
-                httpOnly: sessionToken.httpOnly,
-                sameSite: sessionToken.sameSite,
-                expires: sessionToken.expires,
-              }),
-          );
-        }
+        // Mock chrome object
+        (window as any).chrome = {
+          runtime: {},
+        };
 
-        // TRY SETTING COOKIES ONE BY ONE
-        let successCount = 0;
-        const failedCookies: any[] = [];
+        // Mock permissions
+        const originalQuery = window.navigator.permissions.query;
+        window.navigator.permissions.query = (parameters: any) =>
+          parameters.name === 'notifications'
+            ? Promise.resolve({
+                state: Notification.permission,
+              } as PermissionStatus)
+            : originalQuery(parameters);
+      });
 
-        for (const cookie of puppeteerCookies) {
-          try {
-            await this.incognitoContext.setCookie(cookie);
-            successCount++;
-
-            if (cookie.name.includes('session-token')) {
-              this.logger.log('✅ Session token setCookie() succeeded');
-            }
-          } catch (error) {
-            failedCookies.push({ name: cookie.name, error: error.message });
-            this.logger.error(
-              `Failed to set cookie ${cookie.name}:`,
-              error.message,
-            );
-          }
-        }
-
-        this.logger.log(
-          `🍪 Set results: ${successCount} success, ${failedCookies.length} failed`,
-        );
-        if (failedCookies.length > 0) {
-          this.logger.error('Failed cookies:', failedCookies);
-        }
-
-        // VERIFY what's actually in context
-        const setCookies = await this.incognitoContext.cookies();
-        this.logger.log(`🍪 Cookies actually in context: ${setCookies.length}`);
-        this.logger.log(
-          `🍪 Names in context:` + setCookies.map((c) => c.name).join(','),
-        );
-
-        const contextSessionToken = setCookies.find(
-          (c) => c.name === '__Secure-next-auth.session-token',
-        );
-        this.logger.log(
-          '🔑 Session token in context after set?' + !!contextSessionToken,
-        );
-
-        this.cachedCookies = puppeteerCookies;
-        this.logger.log('✅ Cookies reloaded and cached in incognito context');
-      } else {
-        this.logger.warn(
-          '⚠️  No cookie data provided, context ready without cookies',
-        );
-      }
-    } catch (error) {
-      this.logger.error('❌ Error reloading cookies:', error);
-      throw error;
+      this.profiles.set(profileId, {
+        context,
+        inUse: false,
+        lastUsed: 0,
+        profileId,
+      });
     }
+
+    this.logger.log(`✅ All ${this.MAX_PROFILES} profiles initialized`);
   }
 
+  /**
+   * Lấy profile khả dụng (không đang sử dụng và đã qua cooldown)
+   */
+  private async getAvailableProfile(): Promise<ProfileQueue | null> {
+    const now = Date.now();
+
+    for (const [id, profile] of this.profiles.entries()) {
+      if (!profile.inUse && now - profile.lastUsed >= this.PROFILE_COOLDOWN) {
+        profile.inUse = true;
+        this.logger.debug(`🔓 Profile ${id} acquired`);
+        return profile;
+      }
+    }
+
+    return null;
+  }
+
+  /**
+   * Giải phóng profile sau khi sử dụng
+   */
+  private releaseProfile(profile: ProfileQueue): void {
+    profile.inUse = false;
+    profile.lastUsed = Date.now();
+    this.logger.debug(`🔒 Profile ${profile.profileId} released`);
+  }
+
+  /**
+   * Xử lý hàng đợi request
+   */
+  private async processQueue(): Promise<void> {
+    if (this.isProcessingQueue) return;
+    this.isProcessingQueue = true;
+
+    while (this.requestQueue.length > 0) {
+      const profile = await this.getAvailableProfile();
+
+      if (!profile) {
+        // Không có profile khả dụng, chờ 100ms rồi thử lại
+        await new Promise((resolve) => setTimeout(resolve, 100));
+        continue;
+      }
+
+      const request = this.requestQueue.shift();
+      if (!request) break;
+
+      // Xử lý request với profile này (không await để xử lý song song)
+      this.executeCaptchaWithProfile(profile, request.isDebug)
+        .then((token) => request.resolve(token))
+        .catch((error) => request.reject(error))
+        .finally(() => this.releaseProfile(profile));
+    }
+
+    this.isProcessingQueue = false;
+  }
+
+  /**
+   * API công khai: Thêm request vào hàng đợi
+   */
   async getCaptcha(isDebug: boolean = false): Promise<string> {
-    if (!this.isInitialized || !this.browser || !this.incognitoContext) {
-      throw new Error(
-        'CaptchaService not initialized. Browser or incognito context unavailable.',
+    if (!this.isInitialized || !this.browser) {
+      throw new Error('CaptchaService not initialized');
+    }
+
+    return new Promise((resolve, reject) => {
+      this.requestQueue.push({ resolve, reject, isDebug });
+      this.logger.log(
+        `📋 Request queued (queue size: ${this.requestQueue.length})`,
       );
-    }
+      this.processQueue();
+    });
+  }
 
-    if (!this.projectId) {
-      throw new Error('Project ID not set. Please configure environment.');
-    }
-
-    if (!this.browser.isConnected()) {
-      throw new Error('Browser connection lost. Please try again.');
-    }
-
-    let page;
-    try {
-      page = await this.incognitoContext.newPage();
-    } catch (error) {
-      this.logger.error('❌ Failed to create page:', error);
-      throw new Error('Failed to create browser page');
-    }
+  /**
+   * Thực thi captcha với một profile cụ thể
+   */
+  private async executeCaptchaWithProfile(
+    profile: ProfileQueue,
+    isDebug: boolean = false,
+  ): Promise<string> {
+    const page = await profile.context.newPage();
 
     try {
-      const url = `https://labs.google/fx/tools/flow/project/${this.projectId}/`;
+      const url = `https://labs.google/fx`;
       if (isDebug) {
-        this.logger.debug('🌐 Loading page:' + url);
+        this.logger.debug(`🌐 [${profile.profileId}] Loading page: ${url}`);
       }
 
-      // Navigate to the final URL first (without cookies, will show login page)
-      await page.goto(url, { waitUntil: 'domcontentloaded', timeout: 30000 });
+      // Navigate với timeout
+      await page.goto(url, {
+        waitUntil: 'domcontentloaded',
+        timeout: 30000,
+      });
 
       if (isDebug) {
-        this.logger.debug('✅ Initial page load (not logged in yet)');
-      }
-
-      // NOW set cookies on the already-loaded page
-      if (this.cachedCookies && this.cachedCookies.length > 0) {
-        if (isDebug) {
-          this.logger.debug('🍪 Setting cookies on page...');
-        }
-
-        try {
-          await page.setCookie(...this.cachedCookies);
-          if (isDebug) {
-            this.logger.debug('✅ Cookies set on page');
-          }
-        } catch (error) {
-          this.logger.error('❌ Error setting cookies:', error);
-          // Try one by one
-          let successCount = 0;
-          for (const cookie of this.cachedCookies) {
-            try {
-              await page.setCookie(cookie);
-              successCount++;
-              if (
-                cookie.name === '__Secure-next-auth.session-token' &&
-                isDebug
-              ) {
-                this.logger.debug('✅ Session token set successfully');
-              }
-            } catch (err) {
-              this.logger.error(
-                `❌ Failed to set ${cookie.name}:`,
-                err.message,
-              );
-            }
-          }
-          if (isDebug) {
-            this.logger.debug(
-              `🍪 Set ${successCount}/${this.cachedCookies.length} cookies`,
-            );
-          }
-        }
-      }
-
-      if (isDebug) {
-        const currentCookies = await page.cookies();
-        this.logger.debug('🍪 Cookies on page:' + currentCookies.length);
+        const cookies = await profile.context.cookies();
         this.logger.debug(
-          '🍪 Debug - All cookies:',
-          currentCookies.map((c) => c.name).join(', '),
+          `🍪 [${profile.profileId}] Cookies on page: ${cookies.length}`,
         );
 
-        const sessionToken = currentCookies.find(
+        const sessionToken = cookies.find(
           (c) => c.name === '__Secure-next-auth.session-token',
         );
-        this.logger.debug('🔑 Session token on page?' + !!sessionToken);
-        if (!sessionToken) {
-          this.logger.error('❌ WARNING: Session token missing on page!');
-        }
-
-        const screenshotBuffer = await page.screenshot({ fullPage: true });
+        this.logger.debug(
+          `🔑 [${profile.profileId}] Session token present: ${!!sessionToken}`,
+        );
       }
 
+      // Wait for grecaptcha
       if (isDebug) {
-        // Wait for grecaptcha
-        this.logger.debug('⏳ Waiting for grecaptcha...');
+        this.logger.debug(
+          `⏳ [${profile.profileId}] Waiting for grecaptcha...`,
+        );
       }
+
       await page.waitForFunction(
         () => {
           return (
-            typeof window.grecaptcha !== 'undefined' &&
-            window.grecaptcha.enterprise &&
-            typeof window.grecaptcha.enterprise.execute === 'function'
+            typeof (window as any).grecaptcha !== 'undefined' &&
+            (window as any).grecaptcha.enterprise &&
+            typeof (window as any).grecaptcha.enterprise.execute === 'function'
           );
         },
         { timeout: 30000 },
       );
 
       if (isDebug) {
-        this.logger.debug('🔐 Executing reCAPTCHA...');
+        this.logger.debug(`🔐 [${profile.profileId}] Executing reCAPTCHA...`);
       }
 
       // Execute reCAPTCHA
       const result = await page.evaluate(async () => {
         try {
-          const token = await window.grecaptcha.enterprise.execute(
+          const token = await (window as any).grecaptcha.enterprise.execute(
             '6LdsFiUsAAAAAIjVDZcuLhaHiDn5nnHVXVRQGeMV',
             {
               action: 'FLOW_GENERATION',
             },
           );
           return { success: true, token };
-        } catch (error) {
+        } catch (error: any) {
           return { success: false, error: error.message };
         }
       });
 
       if (result.success && result.token) {
         if (isDebug) {
-          this.logger.debug('✅ reCAPTCHA solved, token obtained');
+          this.logger.debug(`✅ [${profile.profileId}] reCAPTCHA solved`);
         }
         return result.token;
       } else {
-        this.logger.error('❌ Error:', result.error);
         throw new Error(result.error);
       }
     } catch (error) {
-      this.logger.error('❌ getCaptcha error:', error);
+      this.logger.error(
+        `❌ [${profile.profileId}] executeCaptchaWithProfile error:`,
+        error,
+      );
       throw error;
     } finally {
       try {
         await page.close();
       } catch (error) {
-        this.logger.error('⚠️  Error closing page:', error);
+        this.logger.error(
+          `⚠️  [${profile.profileId}] Error closing page:`,
+          error,
+        );
       }
     }
-  }
-
-  convertCookies(cookieData: any) {
-    // Parse nếu là string
-    const data =
-      typeof cookieData === 'string' ? JSON.parse(cookieData) : cookieData;
-
-    return data.cookies.map((cookie: any) => {
-      const converted: any = {
-        name: cookie.name,
-        value: cookie.value,
-        domain: cookie.domain,
-        path: cookie.path,
-        httpOnly: cookie.httpOnly,
-        secure: cookie.secure,
-      };
-
-      if (cookie.expirationDate && !cookie.session) {
-        converted.expires = cookie.expirationDate;
-      }
-
-      if (cookie.sameSite && cookie.sameSite !== 'unspecified') {
-        converted.sameSite =
-          cookie.sameSite.charAt(0).toUpperCase() + cookie.sameSite.slice(1);
-      }
-
-      return converted;
-    });
   }
 }
