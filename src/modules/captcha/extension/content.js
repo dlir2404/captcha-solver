@@ -53,6 +53,9 @@
 
         if (request.type === 'RELOAD_PAGE') {
             console.log('🔄 Content Script: Reloading page...');
+            // Clear localStorage trước khi reload
+            localStorage.removeItem('_grecaptcha');
+            console.log('🗑️ Cleared _grecaptcha from localStorage');
             window.location.reload();
         }
 
