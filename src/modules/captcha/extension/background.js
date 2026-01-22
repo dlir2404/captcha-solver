@@ -34,9 +34,11 @@ async function createReloadAlarm() {
         await chrome.alarms.create('autoReload', {
             periodInMinutes: settings.reloadInterval
         });
+        await createCountdownAlarm();
         console.log(`✅ Auto reload alarm set: ${settings.reloadInterval} minutes`);
     } else {
         console.log('⏸️ Auto reload disabled');
+        await chrome.alarms.clear('countdownTick');
     }
 }
 
@@ -65,6 +67,50 @@ chrome.alarms.onAlarm.addListener(async (alarm) => {
         }
     }
 });
+
+// Gửi countdown đến tất cả tabs mỗi giây
+chrome.alarms.onAlarm.addListener(async (alarm) => {
+    if (alarm.name === 'countdownTick') {
+        const settings = await getSettings();
+        
+        if (!settings.enabled || !settings.autoReload) {
+            return;
+        }
+
+        // Lấy alarm tiếp theo
+        const alarms = await chrome.alarms.getAll();
+        const autoReloadAlarm = alarms.find(a => a.name === 'autoReload');
+        
+        if (autoReloadAlarm) {
+            const now = Date.now();
+            const alarmTime = autoReloadAlarm.scheduledTime;
+            const remainingMs = Math.max(0, alarmTime - now);
+            const remainingSeconds = Math.ceil(remainingMs / 1000);
+
+            // Gửi countdown đến tất cả tabs
+            const tabs = await chrome.tabs.query({});
+            for (const tab of tabs) {
+                try {
+                    await chrome.tabs.sendMessage(tab.id, {
+                        type: 'COUNTDOWN_UPDATE',
+                        remainingSeconds: remainingSeconds,
+                        totalSeconds: settings.reloadInterval * 60
+                    });
+                } catch (error) {
+                    // Ignore errors for tabs that don't have content script
+                }
+            }
+        }
+    }
+});
+
+// Tạo alarm cho countdown (tick mỗi giây)
+async function createCountdownAlarm() {
+    await chrome.alarms.clear('countdownTick');
+    await chrome.alarms.create('countdownTick', {
+        periodInMinutes: 1 / 60 // Mỗi giây
+    });
+}
 
 // Lắng nghe message từ popup hoặc content script
 chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {

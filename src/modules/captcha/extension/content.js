@@ -55,6 +55,15 @@
             console.log('🔄 Content Script: Reloading page...');
             window.location.reload();
         }
+
+        if (request.type === 'COUNTDOWN_UPDATE') {
+            // Gửi countdown đến injected script
+            window.postMessage({
+                type: 'COUNTDOWN_UPDATE',
+                remainingSeconds: request.remainingSeconds,
+                totalSeconds: request.totalSeconds
+            }, '*');
+        }
     });
 
     // Inject script khi DOM ready

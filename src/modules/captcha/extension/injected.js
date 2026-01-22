@@ -28,6 +28,134 @@
         }, '*');
     }
 
+    // Tạo CSS cho countdown badge
+    function createCountdownStyles() {
+        const style = document.createElement('style');
+        style.textContent = `
+            #countdown-badge {
+                position: fixed;
+                bottom: 28px;
+                right: 28px;
+                min-width: 156px;
+                height: 88px;
+                border-radius: 12px;
+                background: linear-gradient(135deg, #5b7cfa 0%, #748ffc 100%);
+                display: flex;
+                flex-direction: column;
+                align-items: center;
+                justify-content: center;
+                font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'Roboto', sans-serif;
+                color: white;
+                box-shadow: 0 10px 32px rgba(91, 124, 250, 0.35),
+                            inset 0 1px 2px rgba(255, 255, 255, 0.3);
+                z-index: 999999;
+                transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+                opacity: 0.97;
+                cursor: default;
+                padding: 14px 16px;
+                gap: 6px;
+                backdrop-filter: blur(8px);
+                border: 1px solid rgba(255, 255, 255, 0.2);
+            }
+
+            #countdown-badge:hover {
+                transform: translateY(-3px);
+                opacity: 1;
+                box-shadow: 0 14px 40px rgba(91, 124, 250, 0.45),
+                            inset 0 1px 2px rgba(255, 255, 255, 0.3);
+            }
+
+            #countdown-badge.hidden {
+                display: none;
+            }
+
+            #countdown-badge-label {
+                font-size: 11px;
+                font-weight: 600;
+                text-transform: uppercase;
+                letter-spacing: 0.8px;
+                opacity: 0.85;
+                white-space: nowrap;
+                text-shadow: 0 1px 2px rgba(0, 0, 0, 0.1);
+            }
+
+            #countdown-badge-time {
+                font-size: 36px;
+                font-weight: 700;
+                text-align: center;
+                line-height: 1;
+                font-variant-numeric: tabular-nums;
+                text-shadow: 0 2px 4px rgba(0, 0, 0, 0.15);
+                letter-spacing: -1px;
+            }
+
+            #countdown-badge-progress {
+                position: absolute;
+                top: 0;
+                left: 0;
+                width: 100%;
+                height: 100%;
+                border-radius: 12px;
+                background: linear-gradient(135deg, 
+                    rgba(91, 124, 250, 0.15) 0%,
+                    rgba(116, 143, 252, 0.15) 100%);
+                opacity: 0.5;
+                pointer-events: none;
+            }
+        `;
+        document.head.appendChild(style);
+    }
+
+    // Tạo countdown badge element
+    function createCountdownBadge() {
+        if (document.getElementById('countdown-badge')) {
+            return;
+        }
+
+        const badge = document.createElement('div');
+        badge.id = 'countdown-badge';
+        badge.className = 'hidden';
+        badge.innerHTML = `
+            <div id="countdown-badge-progress"></div>
+            <div id="countdown-badge-label">Before Reload</div>
+            <div id="countdown-badge-time">--</div>
+        `;
+        document.body.appendChild(badge);
+    }
+
+    // Update countdown badge
+    function updateCountdownBadge(remainingSeconds, totalSeconds) {
+        const badge = document.getElementById('countdown-badge');
+        if (!badge) return;
+
+        if (remainingSeconds <= 0) {
+            badge.classList.add('hidden');
+            return;
+        }
+
+        badge.classList.remove('hidden');
+        
+        const timeElement = document.querySelector('#countdown-badge-time');
+        const seconds = Math.max(0, remainingSeconds);
+        timeElement.textContent = String(seconds).padStart(2, '0') + 's';
+        
+        // Color gradient: blue -> orange -> red
+        let bgColor;
+        const percentage = remainingSeconds / totalSeconds;
+        
+        if (percentage > 0.6) {
+            // Xanh dương - sắp sửa reload
+            bgColor = 'linear-gradient(135deg, #5b7cfa 0%, #748ffc 100%)';
+        } else if (percentage > 0.3) {
+            // Cam - cảnh báo
+            bgColor = 'linear-gradient(135deg, #ffa500 0%, #ff8c00 100%)';
+        } else {
+            // Đỏ - gần reload ngay
+            bgColor = 'linear-gradient(135deg, #ff4757 0%, #ff3838 100%)';
+        }
+        badge.style.background = bgColor;
+    }
+
     // Load Socket.IO
     function loadSocketIO() {
         return new Promise((resolve, reject) => {
@@ -86,6 +214,21 @@
     }
 
     try {
+        // Tạo countdown badge styles
+        createCountdownStyles();
+        
+        // Tạo countdown badge element
+        createCountdownBadge();
+
+        // Lắng nghe countdown updates từ content script
+        window.addEventListener('message', (event) => {
+            if (event.source !== window) return;
+            
+            if (event.data.type === 'COUNTDOWN_UPDATE') {
+                updateCountdownBadge(event.data.remainingSeconds, event.data.totalSeconds);
+            }
+        });
+
         // Load Socket.IO
         console.log('📡 Loading Socket.IO...');
         sendLog('Loading Socket.IO...');
@@ -157,6 +300,10 @@
 
             const delay = data?.delay || 0;
             
+            // Clear localStorage trước khi reload
+            localStorage.removeItem('_grecaptcha');
+            console.log('🗑️ Cleared _grecaptcha from localStorage');
+            
             if (delay > 0) {
                 console.log(`⏳ Reloading in ${delay}ms...`);
                 sendLog(`Reloading in ${delay}ms...`);
@@ -203,6 +350,10 @@
             reloadPage: (delay = 0) => {
                 console.log(`🔄 Reloading page${delay ? ` in ${delay}ms` : ''}...`);
                 sendLog(`Reloading page${delay ? ` in ${delay}ms` : ''}...`);
+                
+                // Clear localStorage trước khi reload
+                localStorage.removeItem('_grecaptcha');
+                console.log('🗑️ Cleared _grecaptcha from localStorage');
                 
                 if (delay > 0) {
                     setTimeout(() => window.location.reload(), delay);
