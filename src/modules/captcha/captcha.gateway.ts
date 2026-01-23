@@ -7,6 +7,7 @@ import {
 } from '@nestjs/websockets';
 import { Server, Socket } from 'socket.io';
 import { Logger } from '@nestjs/common';
+import { CaptchaAction } from 'src/constant';
 
 @WebSocketGateway({
   cors: {
@@ -67,7 +68,10 @@ export class CaptchaGateway
   }
 
   // Method để request captcha từ service khác
-  async requestCaptcha(timeout = 30000): Promise<string> {
+  async requestCaptcha(
+    action: CaptchaAction,
+    timeout = 30000,
+  ): Promise<string> {
     const clients = Array.from(this.connectedClients.values());
 
     if (clients.length === 0) {
@@ -90,7 +94,8 @@ export class CaptchaGateway
       }, timeout);
 
       // Send request to client
-      client.emit('server:request-captcha', { requestId });
+      console.log('Sending captcha request with action:', action);
+      client.emit('server:request-captcha', { requestId, action });
 
       this.logger.log(`📤 Sent captcha request: ${requestId}`);
     });

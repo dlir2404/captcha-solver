@@ -6,10 +6,8 @@
     console.log('🚀 Starting Captcha Client...');
 
     const CONFIG = {
-        projectId: '26685d88-6680-4f20-b9f4-894a1340f3a5',
         siteKey: '6LdsFiUsAAAAAIjVDZcuLhaHiDn5nnHVXVRQGeMV',
         socketServer: 'http://localhost:3000', // URL NestJS server
-        action: 'FLOW_GENERATION'
     };
 
     // Helper để gửi log về content script
@@ -134,15 +132,15 @@
         }
 
         badge.classList.remove('hidden');
-        
+
         const timeElement = document.querySelector('#countdown-badge-time');
         const seconds = Math.max(0, remainingSeconds);
         timeElement.textContent = String(seconds).padStart(2, '0') + 's';
-        
+
         // Color gradient: blue -> orange -> red
         let bgColor;
         const percentage = remainingSeconds / totalSeconds;
-        
+
         if (percentage > 0.6) {
             // Xanh dương - sắp sửa reload
             bgColor = 'linear-gradient(135deg, #5b7cfa 0%, #748ffc 100%)';
@@ -190,20 +188,20 @@
     }
 
     // Solve captcha
-    async function solveCaptcha() {
+    async function solveCaptcha(action = 'VIDEO_GENERATION') {
         try {
             console.log('🔐 Executing reCAPTCHA...');
             sendLog('Executing reCAPTCHA...');
 
             const token = await window.grecaptcha.enterprise.execute(
                 CONFIG.siteKey,
-                { action: CONFIG.action }
+                { action: action }
             );
 
             console.log('✅ Token obtained:', token.substring(0, 50) + '...');
             sendLog('Token obtained: ' + token.substring(0, 50) + '...');
             sendStatus('token_obtained', { tokenLength: token.length });
-            
+
             return token;
         } catch (error) {
             console.error('❌ Captcha error:', error);
@@ -216,14 +214,14 @@
     try {
         // Tạo countdown badge styles
         createCountdownStyles();
-        
+
         // Tạo countdown badge element
         createCountdownBadge();
 
         // Lắng nghe countdown updates từ content script
         window.addEventListener('message', (event) => {
             if (event.source !== window) return;
-            
+
             if (event.data.type === 'COUNTDOWN_UPDATE') {
                 updateCountdownBadge(event.data.remainingSeconds, event.data.totalSeconds);
             }
@@ -271,7 +269,9 @@
             sendLog('Received captcha request');
 
             try {
-                const token = await solveCaptcha();
+                const action = data?.action || 'VIDEO_GENERATION';
+
+                const token = await solveCaptcha(action);
 
                 socket.emit('client:captcha-solved', {
                     requestId: data?.requestId,
@@ -299,11 +299,11 @@
             sendStatus('reload_requested', { delay: data?.delay || 0 });
 
             const delay = data?.delay || 0;
-            
+
             // Clear localStorage trước khi reload
             localStorage.removeItem('_grecaptcha');
             console.log('🗑️ Cleared _grecaptcha from localStorage');
-            
+
             if (delay > 0) {
                 console.log(`⏳ Reloading in ${delay}ms...`);
                 sendLog(`Reloading in ${delay}ms...`);
@@ -350,11 +350,11 @@
             reloadPage: (delay = 0) => {
                 console.log(`🔄 Reloading page${delay ? ` in ${delay}ms` : ''}...`);
                 sendLog(`Reloading page${delay ? ` in ${delay}ms` : ''}...`);
-                
+
                 // Clear localStorage trước khi reload
                 localStorage.removeItem('_grecaptcha');
                 console.log('🗑️ Cleared _grecaptcha from localStorage');
-                
+
                 if (delay > 0) {
                     setTimeout(() => window.location.reload(), delay);
                 } else {
@@ -368,7 +368,7 @@
         console.log('  - captchaClient.solveAndSend() // Solve và gửi manual');
         console.log('  - captchaClient.reloadPage(delay?) // Reload page với delay (ms)');
         console.log('  - captchaClient.socket // Access socket trực tiếp');
-        
+
         sendLog('Captcha Client Ready!');
         sendStatus('ready');
 
