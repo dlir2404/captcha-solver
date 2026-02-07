@@ -18,4 +18,9 @@ export class CaptchaService {
       throw error;
     }
   }
+
+  async forceRefresh() {
+    this.logger.log('Forcing captcha refresh...');
+    await this.captchaGateway.forceRefresh();
+  }
 }

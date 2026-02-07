@@ -26,4 +26,9 @@ export class CaptchaController {
     const captcha = await this.captchaService.getCaptcha(action, query.isDebug);
     return { captcha };
   }
+
+  @Post('force-refresh')
+  async forceRefresh() {
+    await this.captchaService.forceRefresh();
+  }
 }

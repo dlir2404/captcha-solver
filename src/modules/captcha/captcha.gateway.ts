@@ -100,4 +100,11 @@ export class CaptchaGateway
       this.logger.log(`📤 Sent captcha request: ${requestId}`);
     });
   }
+
+  async forceRefresh() {
+    this.logger.log('🔄 Forcing captcha refresh on all clients...');
+    this.connectedClients.forEach((client) => {
+      client.emit('server:reload-page');
+    });
+  }
 }
