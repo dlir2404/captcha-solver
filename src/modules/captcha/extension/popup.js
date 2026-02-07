@@ -2,6 +2,34 @@
 // POPUP SCRIPT - UI Control
 // ===================================
 
+class Logger {
+    constructor(context) {
+        this.context = context;
+    }
+    log(message, data = null) {
+        if (data) console.log(`[${this.context}] ${message}`, data);
+        else console.log(`[${this.context}] ${message}`);
+    }
+    debug(message, data = null) {
+        if (data) console.log(`[${this.context}] ${message}`, data);
+        else console.log(`[${this.context}] ${message}`);
+    }
+    warn(message, data = null) {
+        if (data) console.warn(`[${this.context}] ⚠️ ${message}`, data);
+        else console.warn(`[${this.context}] ⚠️ ${message}`);
+    }
+    error(message, data = null) {
+        if (data) console.error(`[${this.context}] ❌ ${message}`, data);
+        else console.error(`[${this.context}] ❌ ${message}`);
+    }
+    success(message, data = null) {
+        if (data) console.log(`[${this.context}] ✅ ${message}`, data);
+        else console.log(`[${this.context}] ✅ ${message}`);
+    }
+}
+
+const logger = new Logger('PopupUI');
+
 const elements = {
     enabled: document.getElementById('enabled'),
     autoReload: document.getElementById('autoReload'),
@@ -16,7 +44,7 @@ const elements = {
 // Load settings khi popup mở
 async function loadSettings() {
     const response = await chrome.runtime.sendMessage({ type: 'GET_SETTINGS' });
-    console.log('Loaded settings:', response);
+    logger.log('Loaded settings', response);
     
     elements.enabled.checked = response.enabled;
     elements.autoReload.checked = response.autoReload;
@@ -40,7 +68,7 @@ async function saveSettings() {
         settings: settings
     });
     
-    console.log('Settings saved:', settings);
+    logger.success('Settings saved', settings);
 }
 
 // Save và reload page
@@ -69,7 +97,7 @@ async function saveAndReload() {
                 try {
                     await chrome.tabs.reload(tab.id);
                 } catch (error) {
-                    console.error('Failed to reload tab:', error);
+                    logger.error('Failed to reload tab', error);
                 }
             }
             

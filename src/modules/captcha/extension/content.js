@@ -3,7 +3,35 @@
 // ===================================
 
 (function() {
-    console.log('🔧 Content Script: Initializing...');
+    class Logger {
+        constructor(context) {
+            this.context = context;
+        }
+        log(message, data = null) {
+            if (data) console.log(`[${this.context}] ${message}`, data);
+            else console.log(`[${this.context}] ${message}`);
+        }
+        debug(message, data = null) {
+            if (data) console.log(`[${this.context}] ${message}`, data);
+            else console.log(`[${this.context}] ${message}`);
+        }
+        warn(message, data = null) {
+            if (data) console.warn(`[${this.context}] ⚠️ ${message}`, data);
+            else console.warn(`[${this.context}] ⚠️ ${message}`);
+        }
+        error(message, data = null) {
+            if (data) console.error(`[${this.context}] ❌ ${message}`, data);
+            else console.error(`[${this.context}] ❌ ${message}`);
+        }
+        success(message, data = null) {
+            if (data) console.log(`[${this.context}] ✅ ${message}`, data);
+            else console.log(`[${this.context}] ✅ ${message}`);
+        }
+    }
+
+    const logger = new Logger('ContentScript');
+
+    logger.log('Initializing...');
 
     // Inject captcha client script vào page context
     function injectCaptchaScript() {
@@ -14,12 +42,12 @@
         (document.head || document.documentElement).appendChild(script);
         
         script.onload = function() {
-            console.log('✅ Content Script: Captcha client injected successfully');
+            logger.success('Captcha client injected successfully');
             script.remove();
         };
 
         script.onerror = function() {
-            console.error('❌ Content Script: Failed to inject captcha client');
+            logger.error('Failed to inject captcha client');
         };
     }
 
@@ -29,7 +57,7 @@
         
         // Nhận log từ injected script
         if (event.data.type === 'CAPTCHA_LOG') {
-            console.log('📨 From Injected:', event.data.message);
+            logger.log('From Injected', event.data.message);
         }
         
         // Nhận status update
@@ -41,7 +69,7 @@
                     data: event.data.data
                 });
             } catch (error) {
-                console.warn('⚠️ Could not send status update:', error);
+                logger.warn('Could not send status update', error);
             }
         }
 
@@ -50,27 +78,27 @@
             try {
                 chrome.runtime.sendMessage({ type: 'GET_SETTINGS' }, (response) => {
                     if (chrome.runtime.lastError) {
-                        console.warn('❌ Extension error:', chrome.runtime.lastError);
+                        logger.warn('Extension error', chrome.runtime.lastError);
                         return;
                     }
                     
                     if (!response) {
-                        console.warn('❌ No response from background');
+                        logger.warn('No response from background');
                         return;
                     }
                     
                     try {
-                        console.log('📤 Sending settings to injected:', response);
+                        logger.log('Sending settings to injected', response);
                         window.postMessage({
                             type: 'GET_SETTINGS_RESPONSE',
                             settings: response
                         }, '*');
                     } catch (error) {
-                        console.warn('❌ Could not send settings response:', error);
+                        logger.warn('Could not send settings response', error);
                     }
                 });
             } catch (error) {
-                console.warn('❌ Could not request settings:', error);
+                logger.warn('Could not request settings', error);
             }
         }
     });
@@ -85,10 +113,10 @@
         }
 
         if (request.type === 'RELOAD_PAGE') {
-            console.log('🔄 Content Script: Reloading page...');
+            logger.log('Reloading page...');
             // Clear localStorage trước khi reload
             localStorage.removeItem('_grecaptcha');
-            console.log('🗑️ Cleared _grecaptcha from localStorage');
+            logger.log('Cleared _grecaptcha from localStorage');
             window.location.reload();
         }
 
@@ -109,5 +137,5 @@
         injectCaptchaScript();
     }
 
-    console.log('✅ Content Script: Ready');
+    logger.success('Ready');
 })();

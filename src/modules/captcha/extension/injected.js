@@ -3,7 +3,35 @@
 // ===================================
 
 (async function () {
-    console.log('🚀 Starting Captcha Client...');
+    class Logger {
+        constructor(context) {
+            this.context = context;
+        }
+        log(message, data = null) {
+            if (data) console.log(`[${this.context}] ${message}`, data);
+            else console.log(`[${this.context}] ${message}`);
+        }
+        debug(message, data = null) {
+            if (data) console.debug(`[${this.context}] ${message}`, data);
+            else console.debug(`[${this.context}] ${message}`);
+        }
+        warn(message, data = null) {
+            if (data) console.warn(`[${this.context}] ⚠️ ${message}`, data);
+            else console.warn(`[${this.context}] ⚠️ ${message}`);
+        }
+        error(message, data = null) {
+            if (data) console.error(`[${this.context}] ❌ ${message}`, data);
+            else console.error(`[${this.context}] ❌ ${message}`);
+        }
+        success(message, data = null) {
+            if (data) console.log(`[${this.context}] ✅ ${message}`, data);
+            else console.log(`[${this.context}] ✅ ${message}`);
+        }
+    }
+
+    const logger = new Logger('CaptchaClient');
+
+    logger.log('🚀 Starting Captcha Client...');
 
     const CONFIG = {
         siteKey: '6LdsFiUsAAAAAIjVDZcuLhaHiDn5nnHVXVRQGeMV',
@@ -33,7 +61,7 @@
     async function getSettings() {
         // Return cached settings nếu có
         if (cachedSettings) {
-            console.log('📦 Using cached settings:', cachedSettings);
+            logger.log('Using cached settings', cachedSettings);
             return cachedSettings;
         }
 
@@ -42,7 +70,7 @@
                 type: 'GET_SETTINGS_REQUEST'
             }, '*');
             
-            console.log('📡 Requesting settings from background...');
+            logger.log('Requesting settings from background...');
             
             let responseReceived = false;
             
@@ -52,7 +80,7 @@
                     window.removeEventListener('message', listener);
                     responseReceived = true;
                     cachedSettings = event.data.settings;
-                    console.log('✅ Settings received:', cachedSettings);
+                    logger.success('Settings received', cachedSettings);
                     resolve(cachedSettings);
                 }
             };
@@ -64,7 +92,7 @@
                 
                 // Chỉ return defaults, không cache!
                 if (!responseReceived) {
-                    console.warn('⚠️ Settings request timeout, using defaults (NOT cached)');
+                    logger.warn('Settings request timeout, using defaults (NOT cached)');
                     resolve({ clearGrecaptcha: false });
                 }
             }, 2000);
@@ -217,13 +245,13 @@
 
     // Chờ grecaptcha load
     async function waitForRecaptcha() {
-        console.log('⏳ Waiting for reCAPTCHA...');
+        logger.log('Waiting for reCAPTCHA...');
         sendLog('Waiting for reCAPTCHA...');
 
         const maxAttempts = 60;
         for (let i = 0; i < maxAttempts; i++) {
             if (window.grecaptcha?.enterprise?.execute) {
-                console.log('✅ reCAPTCHA ready!');
+                logger.success('reCAPTCHA ready!');
                 sendLog('reCAPTCHA ready!');
                 return true;
             }
@@ -235,7 +263,7 @@
     // Solve captcha
     async function solveCaptcha(action = 'VIDEO_GENERATION') {
         try {
-            console.log('🔐 Executing reCAPTCHA...');
+            logger.log('Executing reCAPTCHA...');
             sendLog('Executing reCAPTCHA...');
 
             const token = await window.grecaptcha.enterprise.execute(
@@ -243,7 +271,7 @@
                 { action: action }
             );
 
-            console.log('✅ Token obtained:', token.substring(0, 50) + '...');
+            logger.success('Token obtained', token.substring(0, 50) + '...');
             sendLog('Token obtained: ' + token.substring(0, 50) + '...');
             sendStatus('token_obtained', { tokenLength: token.length });
 
@@ -251,23 +279,23 @@
             try {
                 const settings = await getSettings();
 
-                console.log('📋 Settings received:', settings);
-                console.log('🔍 clearGrecaptcha value:', settings.clearGrecaptcha);
+                logger.log('Settings received', settings);
+                logger.log('clearGrecaptcha value', settings.clearGrecaptcha);
                 
                 if (settings.clearGrecaptcha === true) {
                     localStorage.removeItem('_grecaptcha');
-                    console.log('🗑️ Cleared _grecaptcha from localStorage');
+                    logger.log('Cleared _grecaptcha from localStorage');
                     sendLog('Cleared _grecaptcha from localStorage');
                 } else {
-                    console.log('⏭️ Skip clearing _grecaptcha (disabled)');
+                    logger.log('Skip clearing _grecaptcha (disabled)');
                 }
             } catch (error) {
-                console.warn('❌ Could not clear _grecaptcha:', error);
+                logger.warn('Could not clear _grecaptcha', error);
             }
 
             return token;
         } catch (error) {
-            console.error('❌ Captcha error:', error);
+            logger.error('Captcha error', error);
             sendLog('Captcha error: ' + error.message);
             sendStatus('error', { error: error.message });
             throw error;
@@ -291,12 +319,12 @@
         });
 
         // Load Socket.IO
-        console.log('📡 Loading Socket.IO...');
+        logger.log('Loading Socket.IO...');
         sendLog('Loading Socket.IO...');
         const io = await loadSocketIO();
 
         // Connect to server
-        console.log('🔌 Connecting to server...');
+        logger.log('Connecting to server...');
         sendLog('Connecting to server...');
         const socket = io(CONFIG.socketServer, {
             transports: ['websocket', 'polling'],
@@ -304,7 +332,7 @@
         });
 
         socket.on('connect', () => {
-            console.log('✅ Connected to server! Socket ID:', socket.id);
+            logger.success('Connected to server! Socket ID', socket.id);
             sendLog('Connected to server! Socket ID: ' + socket.id);
             sendStatus('connected', { socketId: socket.id });
 
@@ -315,20 +343,20 @@
         });
 
         socket.on('disconnect', () => {
-            console.log('❌ Disconnected from server');
+            logger.log('Disconnected from server');
             sendLog('Disconnected from server');
             sendStatus('disconnected');
         });
 
         socket.on('connect_error', (error) => {
-            console.error('Connection error:', error);
+            logger.error('Connection error', error);
             sendLog('Connection error: ' + error.message);
             sendStatus('connection_error', { error: error.message });
         });
 
         // Lắng nghe yêu cầu solve captcha từ server
         socket.on('server:request-captcha', async (data) => {
-            console.log('📨 Received captcha request:', data);
+            logger.log('Received captcha request', data);
             sendLog('Received captcha request');
 
             try {
@@ -342,7 +370,7 @@
                     timestamp: new Date().toISOString()
                 });
 
-                console.log('📤 Sent token to server');
+                logger.log('Sent token to server');
                 sendLog('Sent token to server');
             } catch (error) {
                 socket.emit('client:captcha-error', {
@@ -350,14 +378,14 @@
                     error: error.message,
                     timestamp: new Date().toISOString()
                 });
-                console.error('Failed to solve captcha:', error);
+                logger.error('Failed to solve captcha', error);
                 sendLog('Failed to solve captcha: ' + error.message);
             }
         });
 
         // Lắng nghe yêu cầu reload page từ server
         socket.on('server:reload-page', (data) => {
-            console.log('🔄 Received reload page request:', data);
+            logger.log('Received reload page request', data);
             sendLog('Server requested page reload');
             sendStatus('reload_requested', { delay: data?.delay || 0 });
 
@@ -365,10 +393,10 @@
 
             // Clear localStorage trước khi reload
             localStorage.removeItem('_grecaptcha');
-            console.log('🗑️ Cleared _grecaptcha from localStorage');
+            logger.log('Cleared _grecaptcha from localStorage');
 
             if (delay > 0) {
-                console.log(`⏳ Reloading in ${delay}ms...`);
+                logger.log(`Reloading in ${delay}ms...`);
                 sendLog(`Reloading in ${delay}ms...`);
                 setTimeout(() => {
                     window.location.reload();
@@ -382,10 +410,10 @@
         await waitForRecaptcha();
 
         // Test solve captcha ngay
-        console.log('🧪 Testing captcha solve...');
+        logger.log('Testing captcha solve...');
         sendLog('Testing captcha solve...');
         const testToken = await solveCaptcha();
-        console.log('✅ Test successful! Token length:', testToken.length);
+        logger.success('Test successful! Token length', testToken.length);
         sendLog('Test successful! Token length: ' + testToken.length);
 
         // Expose utilities
@@ -411,12 +439,12 @@
 
             // Manual reload page
             reloadPage: (delay = 0) => {
-                console.log(`🔄 Reloading page${delay ? ` in ${delay}ms` : ''}...`);
+                logger.log(`Reloading page${delay ? ` in ${delay}ms` : ''}...`);
                 sendLog(`Reloading page${delay ? ` in ${delay}ms` : ''}...`);
 
                 // Clear localStorage trước khi reload
                 localStorage.removeItem('_grecaptcha');
-                console.log('🗑️ Cleared _grecaptcha from localStorage');
+                logger.log('Cleared _grecaptcha from localStorage');
 
                 if (delay > 0) {
                     setTimeout(() => window.location.reload(), delay);
@@ -426,17 +454,17 @@
             }
         };
 
-        console.log('🎉 Captcha Client Ready!');
-        console.log('💡 Available commands:');
-        console.log('  - captchaClient.solveAndSend() // Solve và gửi manual');
-        console.log('  - captchaClient.reloadPage(delay?) // Reload page với delay (ms)');
-        console.log('  - captchaClient.socket // Access socket trực tiếp');
+        logger.success('Captcha Client Ready!');
+        logger.log('Available commands:');
+        logger.log('  - captchaClient.solveAndSend() // Solve và gửi manual');
+        logger.log('  - captchaClient.reloadPage(delay?) // Reload page với delay (ms)');
+        logger.log('  - captchaClient.socket // Access socket trực tiếp');
 
         sendLog('Captcha Client Ready!');
         sendStatus('ready');
 
     } catch (error) {
-        console.error('❌ Initialization failed:', error);
+        logger.error('Initialization failed', error);
         sendLog('Initialization failed: ' + error.message);
         sendStatus('init_failed', { error: error.message });
     }
