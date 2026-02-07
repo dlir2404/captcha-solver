@@ -10,6 +10,9 @@
         socketServer: 'http://localhost:3000', // URL NestJS server
     };
 
+    // Cache settings - lưu để tránh request lặp lại
+    let cachedSettings = null;
+
     // Helper để gửi log về content script
     function sendLog(message) {
         window.postMessage({
@@ -24,6 +27,48 @@
             type: 'CAPTCHA_STATUS',
             data: { status, ...data }
         }, '*');
+    }
+
+    // Load settings từ content script
+    async function getSettings() {
+        // Return cached settings nếu có
+        if (cachedSettings) {
+            console.log('📦 Using cached settings:', cachedSettings);
+            return cachedSettings;
+        }
+
+        return await new Promise((resolve) => {
+            window.postMessage({
+                type: 'GET_SETTINGS_REQUEST'
+            }, '*');
+            
+            console.log('📡 Requesting settings from background...');
+            
+            let responseReceived = false;
+            
+            const listener = (event) => {
+                if (event.source !== window) return;
+                if (event.data.type === 'GET_SETTINGS_RESPONSE') {
+                    window.removeEventListener('message', listener);
+                    responseReceived = true;
+                    cachedSettings = event.data.settings;
+                    console.log('✅ Settings received:', cachedSettings);
+                    resolve(cachedSettings);
+                }
+            };
+            window.addEventListener('message', listener);
+            
+            // Timeout after 2s if no response
+            setTimeout(() => {
+                window.removeEventListener('message', listener);
+                
+                // Chỉ return defaults, không cache!
+                if (!responseReceived) {
+                    console.warn('⚠️ Settings request timeout, using defaults (NOT cached)');
+                    resolve({ clearGrecaptcha: false });
+                }
+            }, 2000);
+        });
     }
 
     // Tạo CSS cho countdown badge
@@ -201,6 +246,24 @@
             console.log('✅ Token obtained:', token.substring(0, 50) + '...');
             sendLog('Token obtained: ' + token.substring(0, 50) + '...');
             sendStatus('token_obtained', { tokenLength: token.length });
+
+            // Clear _grecaptcha from localStorage nếu config enabled
+            try {
+                const settings = await getSettings();
+
+                console.log('📋 Settings received:', settings);
+                console.log('🔍 clearGrecaptcha value:', settings.clearGrecaptcha);
+                
+                if (settings.clearGrecaptcha === true) {
+                    localStorage.removeItem('_grecaptcha');
+                    console.log('🗑️ Cleared _grecaptcha from localStorage');
+                    sendLog('Cleared _grecaptcha from localStorage');
+                } else {
+                    console.log('⏭️ Skip clearing _grecaptcha (disabled)');
+                }
+            } catch (error) {
+                console.warn('❌ Could not clear _grecaptcha:', error);
+            }
 
             return token;
         } catch (error) {

@@ -6,6 +6,8 @@ const elements = {
     enabled: document.getElementById('enabled'),
     autoReload: document.getElementById('autoReload'),
     reloadInterval: document.getElementById('reloadInterval'),
+    clearGrecaptcha: document.getElementById('clearGrecaptcha'),
+    saveSettings: document.getElementById('saveSettings'),
     reloadNow: document.getElementById('reloadNow'),
     autoReloadRow: document.getElementById('autoReloadRow'),
     intervalRow: document.getElementById('intervalRow')
@@ -14,20 +16,23 @@ const elements = {
 // Load settings khi popup mở
 async function loadSettings() {
     const response = await chrome.runtime.sendMessage({ type: 'GET_SETTINGS' });
+    console.log('Loaded settings:', response);
     
     elements.enabled.checked = response.enabled;
     elements.autoReload.checked = response.autoReload;
     elements.reloadInterval.value = response.reloadInterval;
+    elements.clearGrecaptcha.checked = response.clearGrecaptcha ?? false;
     
     updateUIState();
 }
 
-// Save settings khi thay đổi
+// Save settings khi thay đổi (chỉ lưu, không reload)
 async function saveSettings() {
     const settings = {
         enabled: elements.enabled.checked,
         autoReload: elements.autoReload.checked,
-        reloadInterval: parseInt(elements.reloadInterval.value)
+        reloadInterval: parseInt(elements.reloadInterval.value),
+        clearGrecaptcha: elements.clearGrecaptcha.checked
     };
     
     await chrome.runtime.sendMessage({
@@ -36,6 +41,49 @@ async function saveSettings() {
     });
     
     console.log('Settings saved:', settings);
+}
+
+// Save và reload page
+async function saveAndReload() {
+    const button = elements.saveSettings;
+    const originalHTML = button.innerHTML;
+    
+    button.innerHTML = '<span>💾</span><span>Saving...</span>';
+    button.disabled = true;
+    
+    try {
+        // Save settings
+        await saveSettings();
+        
+        button.innerHTML = '<span>✅</span><span>Saved!</span>';
+        
+        // Haptic feedback
+        if (navigator.vibrate) {
+            navigator.vibrate([10, 50, 10]);
+        }
+        
+        // Reload all active tabs
+        setTimeout(async () => {
+            const tabs = await chrome.tabs.query({ active: true });
+            for (const tab of tabs) {
+                try {
+                    await chrome.tabs.reload(tab.id);
+                } catch (error) {
+                    console.error('Failed to reload tab:', error);
+                }
+            }
+            
+            button.innerHTML = originalHTML;
+            button.disabled = false;
+        }, 1000);
+    } catch (error) {
+        button.innerHTML = '<span>❌</span><span>Error</span>';
+        
+        setTimeout(() => {
+            button.innerHTML = originalHTML;
+            button.disabled = false;
+        }, 2000);
+    }
 }
 
 // Update UI state dựa vào settings
@@ -62,10 +110,9 @@ function updateUIState() {
     }
 }
 
-// Event listeners
+// Event listeners - Chỉ update UI, không save
 elements.enabled.addEventListener('change', () => {
     updateUIState();
-    saveSettings();
     
     // Add haptic feedback
     if (navigator.vibrate) {
@@ -75,15 +122,15 @@ elements.enabled.addEventListener('change', () => {
 
 elements.autoReload.addEventListener('change', () => {
     updateUIState();
-    saveSettings();
     
     if (navigator.vibrate) {
         navigator.vibrate(10);
     }
 });
 
-elements.reloadInterval.addEventListener('change', () => {
-    saveSettings();
+// Save & Reload button
+elements.saveSettings.addEventListener('click', async () => {
+    await saveAndReload();
 });
 
 elements.reloadNow.addEventListener('click', async () => {

@@ -35,10 +35,43 @@
         // Nhận status update
         if (event.data.type === 'CAPTCHA_STATUS') {
             // Gửi status lên background script nếu cần
-            chrome.runtime.sendMessage({
-                type: 'CAPTCHA_STATUS_UPDATE',
-                data: event.data.data
-            });
+            try {
+                chrome.runtime.sendMessage({
+                    type: 'CAPTCHA_STATUS_UPDATE',
+                    data: event.data.data
+                });
+            } catch (error) {
+                console.warn('⚠️ Could not send status update:', error);
+            }
+        }
+
+        // Nhận request settings từ injected script
+        if (event.data.type === 'GET_SETTINGS_REQUEST') {
+            try {
+                chrome.runtime.sendMessage({ type: 'GET_SETTINGS' }, (response) => {
+                    if (chrome.runtime.lastError) {
+                        console.warn('❌ Extension error:', chrome.runtime.lastError);
+                        return;
+                    }
+                    
+                    if (!response) {
+                        console.warn('❌ No response from background');
+                        return;
+                    }
+                    
+                    try {
+                        console.log('📤 Sending settings to injected:', response);
+                        window.postMessage({
+                            type: 'GET_SETTINGS_RESPONSE',
+                            settings: response
+                        }, '*');
+                    } catch (error) {
+                        console.warn('❌ Could not send settings response:', error);
+                    }
+                });
+            } catch (error) {
+                console.warn('❌ Could not request settings:', error);
+            }
         }
     });
 
