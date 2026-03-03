@@ -1,0 +1,8 @@
+services:
+  app:
+    build: .
+    ports:
+      - "${API_PORT:-3000}:${API_PORT:-3000}"
+    env_file:
+      - .env
+    restart: unless-stopped
