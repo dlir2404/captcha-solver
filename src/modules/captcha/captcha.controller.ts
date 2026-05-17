@@ -22,7 +22,8 @@ export class CaptchaController {
   async getCaptcha(
     @Query() query: GetCaptchaQuery,
   ): Promise<{ captcha: string }> {
-    const captcha = await this.captchaService.getCaptcha(query.isDebug);
+    const { action } = query;
+    const captcha = await this.captchaService.getCaptcha(action, query.isDebug);
     return { captcha };
   }
 }

@@ -1,5 +1,6 @@
 import { Injectable, Logger } from '@nestjs/common';
-import { chromium, Browser, BrowserContext } from 'playwright';
+import { chromium, Browser, BrowserContext, LaunchOptions } from 'playwright';
+import { CaptchaAction } from 'src/constant';
 
 declare global {
   interface Window {
@@ -11,95 +12,45 @@ declare global {
   }
 }
 
+// Constants
+const RECAPTCHA_CONFIG = {
+  siteKey: '6LdsFiUsAAAAAIjVDZcuLhaHiDn5nnHVXVRQGeMV',
+  targetUrl: 'https://labs.google/fx',
+} as const;
+
+const TIMEOUTS = {
+  PAGE_LOAD: 30000,
+  RECAPTCHA_READY: 30000,
+} as const;
+
+const USER_AGENT =
+  'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36';
+
+// Browser arguments optimized for Docker + Playwright
+const BROWSER_ARGS = [
+  // Required for Docker/containerized environments
+  '--no-sandbox',
+  '--disable-setuid-sandbox',
+  '--disable-dev-shm-usage',
+  // Anti-detection
+  '--disable-blink-features=AutomationControlled',
+  // Performance and cleanup
+  '--disable-gpu',
+  '--disable-extensions',
+  '--no-first-run',
+  '--disable-background-networking',
+  '--disable-sync',
+  '--disable-default-apps',
+  '--mute-audio',
+  '--no-default-browser-check',
+];
+
 @Injectable()
 export class CaptchaService {
-  private logger = new Logger(CaptchaService.name);
+  private readonly logger = new Logger(CaptchaService.name);
 
-  async initBrowser(): Promise<Browser> {
-    try {
-      this.logger.log('🚀 Initializing Playwright browser instance...');
-
-      const launchOptions: any = {
-        headless: false,
-        args: [
-          '--no-sandbox',
-          '--disable-setuid-sandbox',
-          '--disable-dev-shm-usage',
-          '--disable-blink-features=AutomationControlled',
-        ],
-      };
-
-      if (process.env.NODE_ENV === 'production') {
-        const chromePaths = [
-          process.env.CHROME_EXECUTABLE_PATH,
-          'C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe',
-          'C:\\Program Files (x86)\\Google\\Chrome\\Application\\chrome.exe',
-        ].filter(Boolean);
-
-        launchOptions.executablePath = chromePaths[0];
-        launchOptions.args.push(
-          '--disable-gpu',
-          '--disable-software-rasterizer',
-          '--disable-extensions',
-          '--no-first-run',
-          '--disable-background-timer-throttling',
-          '--disable-backgrounding-occluded-windows',
-          '--disable-renderer-backgrounding',
-          '--disable-background-networking',
-          '--disable-sync',
-          '--metrics-recording-only',
-          '--disable-default-apps',
-          '--mute-audio',
-          '--no-default-browser-check',
-          '--autoplay-policy=user-gesture-required',
-          '--disable-features=TranslateUI',
-          '--disable-ipc-flooding-protection',
-        );
-
-        this.logger.log(`Using Chrome at: ${launchOptions.executablePath}`);
-      }
-
-      const browser = await chromium.launch(launchOptions);
-      this.logger.log('✅ Playwright browser instance ready');
-
-      return browser;
-    } catch (error) {
-      this.logger.error('Failed to initialize browser:', error);
-      this.logger.error(
-        'Make sure Google Chrome is installed on your Windows VPS',
-      );
-      throw error;
-    }
-  }
-
-  private async initContext(browser: Browser): Promise<BrowserContext> {
-    if (!browser) {
-      throw new Error('Browser not initialized');
-    }
-
-    // Tạo context với chế độ ẩn danh (incognito)
-    const context = await browser.newContext({
-      viewport: { width: 1920, height: 1080 },
-      userAgent:
-        'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36',
-      locale: 'en-US',
-      timezoneId: 'America/New_York',
-      permissions: ['geolocation'],
-      geolocation: { latitude: 40.7128, longitude: -74.006 },
-      colorScheme: 'light',
-      deviceScaleFactor: 1,
-      hasTouch: false,
-      isMobile: false,
-      javaScriptEnabled: true,
-      // Chế độ ẩn danh: không lưu cookies, cache, storage
-      storageState: undefined,
-      acceptDownloads: false,
-      // Xóa hết dữ liệu cũ
-      ignoreHTTPSErrors: false,
-    });
-
-    // Anti-detection scripts
-    await context.addInitScript(() => {
+  private getAntiDetectionScript(): string {
+    return `
       Object.defineProperty(navigator, 'webdriver', {
         get: () => false,
       });
@@ -112,23 +63,59 @@ export class CaptchaService {
         get: () => ['en-US', 'en'],
       });
 
-      (window as any).chrome = {
+      window.chrome = {
         runtime: {},
       };
 
       const originalQuery = window.navigator.permissions.query;
-      window.navigator.permissions.query = (parameters: any) =>
+      window.navigator.permissions.query = (parameters) =>
         parameters.name === 'notifications'
           ? Promise.resolve({
               state: Notification.permission,
-            } as PermissionStatus)
+            })
           : originalQuery(parameters);
+    `;
+  }
+
+  async initBrowser(): Promise<Browser> {
+    try {
+      this.logger.log('Initializing Playwright browser instance...');
+
+      const launchOptions: LaunchOptions = {
+        headless: true,
+        args: BROWSER_ARGS,
+      };
+
+      const browser = await chromium.launch(launchOptions);
+      this.logger.log('Playwright browser instance ready');
+
+      return browser;
+    } catch (error) {
+      this.logger.error('Failed to initialize browser:', error);
+      throw error;
+    }
+  }
+
+  private async initContext(browser: Browser): Promise<BrowserContext> {
+    const context = await browser.newContext({
+      viewport: { width: 1920, height: 1080 },
+      userAgent: USER_AGENT,
+      locale: 'en-US',
+      timezoneId: 'America/New_York',
+      permissions: ['geolocation'],
+      geolocation: { latitude: 40.7128, longitude: -74.006 },
+      colorScheme: 'light',
     });
+
+    await context.addInitScript(this.getAntiDetectionScript());
 
     return context;
   }
 
-  async getCaptcha(isDebug: boolean = false): Promise<string> {
+  async getCaptcha(
+    action: CaptchaAction = CaptchaAction.IMAGE_GENERATION,
+    isDebug: boolean = false,
+  ): Promise<string> {
     let browser: Browser | null = null;
     let context: BrowserContext | null = null;
 
@@ -138,11 +125,9 @@ export class CaptchaService {
       const page = await context.newPage();
 
       try {
-        const url = `https://labs.google/fx`;
-
-        await page.goto(url, {
+        await page.goto(RECAPTCHA_CONFIG.targetUrl, {
           waitUntil: 'domcontentloaded',
-          timeout: 30000,
+          timeout: TIMEOUTS.PAGE_LOAD,
         });
 
         await page.waitForFunction(
@@ -154,38 +139,41 @@ export class CaptchaService {
                 'function'
             );
           },
-          { timeout: 30000 },
+          { timeout: TIMEOUTS.RECAPTCHA_READY },
         );
 
         if (isDebug) {
-          this.logger.debug(`🔐 Executing reCAPTCHA...`);
+          this.logger.debug('Executing reCAPTCHA...');
         }
 
-        // Execute reCAPTCHA
-        const result = await page.evaluate(async () => {
-          try {
-            const token = await (window as any).grecaptcha.enterprise.execute(
-              '6LdsFiUsAAAAAIjVDZcuLhaHiDn5nnHVXVRQGeMV',
-              {
-                action: 'FLOW_GENERATION',
-              },
-            );
-            return { success: true, token };
-          } catch (error: any) {
-            return { success: false, error: error.message };
-          }
-        });
+        const result = await page.evaluate(
+          async ({ siteKey, action }) => {
+            try {
+              const token = await (window as any).grecaptcha.enterprise.execute(
+                siteKey,
+                { action },
+              );
+              return { success: true, token };
+            } catch (error: any) {
+              return { success: false, error: error.message };
+            }
+          },
+          {
+            siteKey: RECAPTCHA_CONFIG.siteKey,
+            action,
+          },
+        );
 
         if (result.success && result.token) {
           return result.token;
-        } else {
-          throw new Error(result.error || 'Failed to get captcha token');
         }
+
+        throw new Error(result.error || 'Failed to get captcha token');
       } finally {
         await page.close();
       }
     } catch (error) {
-      this.logger.error(`❌ getCaptcha error:`, error);
+      this.logger.error('getCaptcha error:', error);
       throw error;
     } finally {
       if (context) {

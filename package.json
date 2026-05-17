@@ -29,7 +29,6 @@
     "class-validator": "^0.14.3",
     "playwright": "^1.57.0",
     "puppeteer": "^24.34.0",
-    "redis": "^5.10.0",
     "reflect-metadata": "^0.2.2",
     "rxjs": "^7.8.1"
   },

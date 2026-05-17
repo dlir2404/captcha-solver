@@ -15,32 +15,16 @@ COPY . .
 # Build the application
 RUN npm run build
 
-# Production stage
-FROM node:22-alpine
+# Production stage - Use official Playwright image
+FROM mcr.microsoft.com/playwright:v1.57.0-jammy
 
 WORKDIR /app
 
-# Install dependencies for Chrome/Chromium AND Xvfb
-RUN apk add --no-cache \
-    chromium \
-    nss \
-    freetype \
-    harfbuzz \
-    ca-certificates \
-    ttf-freefont \
-    font-noto-cjk \
-    font-opensans \
-    xvfb \
-    xvfb-run \
-    dbus \
-    udev \
-    ttf-liberation
+# Install dumb-init for proper signal handling
+RUN apt-get update && apt-get install -y dumb-init && rm -rf /var/lib/apt/lists/*
 
-# Create non-root user
-RUN addgroup -g 1001 -S nodejs && adduser -S nestjs -u 1001
-
-# Install dumb-init to handle signals properly
-RUN apk add --no-cache dumb-init
+# Create non-root user (pwuser already exists in Playwright image, but we'll use our own)
+RUN groupadd -g 1001 nodejs && useradd -u 1001 -g nodejs -s /bin/bash nestjs
 
 # Copy package files
 COPY package*.json ./
@@ -48,27 +32,14 @@ COPY package*.json ./
 # Install only production dependencies
 RUN npm ci --only=production && npm cache clean --force
 
-# Set environment variable for Puppeteer to use system Chromium
-ENV PUPPETEER_EXECUTABLE_PATH=/usr/bin/chromium-browser
-ENV PUPPETEER_SKIP_DOWNLOAD=true
-ENV DISPLAY=:99
-
 # Copy built application from builder
 COPY --from=builder --chown=nestjs:nodejs /app/dist ./dist
 
-# Expose port (default NestJS port)
+# Expose port
 EXPOSE 3000
-
-# Create startup script
-RUN echo '#!/bin/sh' > /app/start.sh && \
-    echo 'Xvfb :99 -screen 0 1920x1080x24 -ac +extension GLX +render -noreset &' >> /app/start.sh && \
-    echo 'sleep 2' >> /app/start.sh && \
-    echo 'exec node dist/main.js' >> /app/start.sh && \
-    chmod +x /app/start.sh && \
-    chown nestjs:nodejs /app/start.sh
 
 # Switch to non-root user
 USER nestjs
 
-# Start application with Xvfb
-CMD ["/app/start.sh"]
+# Start application (no need for Xvfb - Playwright handles headless natively)
+CMD ["dumb-init", "node", "dist/main.js"]
