@@ -1,3 +1,6 @@
+## Link hướng dẫn Youtube:
+[https://www.youtube.com/watch?v=O_fbV6OQWKU](https://www.youtube.com/watch?v=O_fbV6OQWKU)
+
 ## Description
 Project này dùng để giải captcha veo3 bằng cách chạy một browser (chrome) thật và cài một extension để nhận request. Vì vậy project sẽ gồm 2 thành phần:
 - Server: nhận request giải captcha
